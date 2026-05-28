@@ -1,0 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..800,0..100&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+html, body { background: #faf7f2; color: #1a1816; font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; }
+
+.serif-italic { font-family: 'Fraunces', serif; font-style: italic; font-feature-settings: "ss01"; }
+
+/* Form fields — quiet, editorial */
+.fld {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #e3ddd0;
+  padding: 10px 0 10px;
+  font-size: 16px;
+  font-family: 'Inter', sans-serif;
+  color: #1a1816;
+  outline: none;
+  transition: border-color .2s;
+}
+.fld:focus { border-bottom-color: #1a1816; }
+.fld::placeholder { color: #b3aea3; }
+
+.fld-card {
+  width: 100%;
+  background: #ffffff;
+  border: 1px solid #e3ddd0;
+  border-radius: 4px;
+  padding: 12px 14px;
+  font-size: 15px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.fld-card:focus { border-color: #1a1816; box-shadow: 0 0 0 3px rgba(26,24,22,.06); }
+
+.lbl {
+  display: block;
+  margin-bottom: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6b655d;
+}
+
+.rule { height: 1px; background: #e3ddd0; }
+.rule-ink { height: 1px; background: #1a1816; }
+
+/* Editorial number styling */
+.numeral { font-family: 'Fraunces', serif; font-feature-settings: "lnum","tnum"; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d8d0bf; border-radius: 4px; }
