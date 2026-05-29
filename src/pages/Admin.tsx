@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Wand2, ImagePlus, Trash2, FileSpreadsheet, Loader2, Check, LogOut, ArrowRight, Sparkles } from 'lucide-react';
 import { type Person, emptyPerson } from '../lib/types';
 import { upsertPerson, addManyPeople } from '../lib/store';
-import { parseCSV, mapRowsToPeople } from '../lib/csv';
+import { parseCSV, mapRowsToPeopleWithPhotos } from '../lib/csv';
 import { enhanceImage, polishProfile } from '../lib/ai';
 import { isAuthed, signOut } from '../lib/auth';
 import Passcode from '../components/Passcode';
@@ -76,11 +76,33 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
   const onCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
     setBusy('csv');
-    const text = await f.text();
-    const people = mapRowsToPeople(parseCSV(text));
-    setQueue(q => [...q, ...people]);
-    setBusy('');
-    if (csvRef.current) csvRef.current.value = '';
+    try {
+      const text = await f.text();
+      const rows = parseCSV(text);
+      const people = await mapRowsToPeopleWithPhotos(rows, (loaded, total) => {
+        setBusy(`photos ${loaded}/${total}`);
+      });
+      setQueue(q => [...q, ...people]);
+      if (people.length === 0) {
+        alert("Couldn't read any rows. Check that your CSV has a header row and at least one response.");
+      } else {
+        const failed = people.filter(p => p.photo && /^https?:/i.test(p.photo)).length;
+        if (failed > 0) {
+          alert(
+            `Imported ${people.length} ${people.length === 1 ? 'person' : 'people'}.\n\n` +
+            `${failed} photo${failed === 1 ? '' : 's'} couldn't load — most likely because the Drive folder isn't shared publicly.\n\n` +
+            `Fix: open the Drive folder where Forms saved the photos, select all, right-click → Share → "Anyone with the link → Viewer", then re-import.\n\n` +
+            `You can also upload portraits manually by clicking each person in the queue.`
+          );
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Something went wrong importing that file.');
+    } finally {
+      setBusy('');
+      if (csvRef.current) csvRef.current.value = '';
+    }
   };
 
   useEffect(() => { document.title = "Editor's Desk · The Class Quarterly"; }, []);
@@ -111,10 +133,14 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
               className="flex items-center gap-2 border border-ink bg-ink px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-paper hover:bg-graphite disabled:opacity-50">
               {busy==='polish' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI polish & quote
             </button>
-            <input ref={csvRef} type="file" accept=".csv" onChange={onCSV} className="hidden" />
-            <button onClick={() => csvRef.current?.click()}
-              className="flex items-center gap-2 border border-rule px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-graphite hover:border-ink">
-              {busy==='csv' ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />} Import CSV
+            <input ref={csvRef} type="file" accept=".csv,.tsv,.txt" onChange={onCSV} className="hidden" />
+            <button onClick={() => csvRef.current?.click()} disabled={busy.startsWith('csv') || busy.startsWith('photos')}
+              className="flex items-center gap-2 border border-rule px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-graphite hover:border-ink disabled:opacity-50">
+              {busy === 'csv'
+                ? <><Loader2 size={12} className="animate-spin" /> Reading CSV</>
+                : busy.startsWith('photos ')
+                  ? <><Loader2 size={12} className="animate-spin" /> Loading {busy.replace('photos ', '')}</>
+                  : <><FileSpreadsheet size={12} /> Import CSV</>}
             </button>
           </div>
 
