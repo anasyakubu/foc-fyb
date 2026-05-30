@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Plus, Wand2, ImagePlus, Trash2, FileSpreadsheet, Loader2, Check, LogOut, ArrowRight, Sparkles } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Plus, Wand2, ImagePlus, Trash2, FileSpreadsheet, Loader2, Check, LogOut, ArrowRight, Sparkles, Pencil } from 'lucide-react';
 import { type Person, emptyPerson } from '../lib/types';
-import { upsertPerson, addManyPeople } from '../lib/store';
-import { parseCSV, mapRowsToPeople } from '../lib/csv';   // updated import
+import { upsertPerson, addManyPeople, getPerson } from '../lib/store';
+import { parseCSV, mapRowsToPeopleWithPhotos } from '../lib/csv';
 import { enhanceImage, polishProfile } from '../lib/ai';
 import { isAuthed, signOut } from '../lib/auth';
 import Passcode from '../components/Passcode';
+import Loading from '../components/Loading';
 
 const fileToDataUrl = (f: File) => new Promise<string>((res) => {
   const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(f);
@@ -20,11 +21,29 @@ export default function Admin() {
 
 function Editor({ onSignOut }: { onSignOut: () => void }) {
   const nav = useNavigate();
+  const [params] = useSearchParams();
+  const editId = params.get('edit');
+
   const [draft, setDraft] = useState<Person>(emptyPerson());
+  const [loadingEdit, setLoadingEdit] = useState<boolean>(!!editId);
   const [busy, setBusy] = useState<string>('');
   const [queue, setQueue] = useState<Person[]>([]);
   const photoRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
+
+  const isEditing = !!editId && draft.id === editId;
+
+  useEffect(() => {
+    if (!editId) return;
+    let cancelled = false;
+    getPerson(editId).then(p => {
+      if (cancelled) return;
+      if (p) setDraft(p);
+      else alert("Couldn't find that personality. It may have been removed.");
+      setLoadingEdit(false);
+    });
+    return () => { cancelled = true; };
+  }, [editId]);
 
   const onField = (k: keyof Person) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
@@ -72,7 +91,6 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
       setBusy('');
     }
   };
-
   const stage = () => {
     if (!draft.name.trim()) return alert('A name is required.');
     setQueue(q => [...q, draft]);
@@ -102,20 +120,29 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
     }
   };
 
-  // UPDATED: CSV import without photo fetching
   const onCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
+    const f = e.target.files?.[0]; if (!f) return;
     setBusy('csv');
     try {
       const text = await f.text();
       const rows = parseCSV(text);
-      const people = mapRowsToPeople(rows);   // sync, no photo download
+      const people = await mapRowsToPeopleWithPhotos(rows, (loaded, total) => {
+        setBusy(`photos ${loaded}/${total}`);
+      });
       setQueue(q => [...q, ...people]);
       if (people.length === 0) {
         alert("Couldn't read any rows. Check that your CSV has a header row and at least one response.");
+      } else {
+        const failed = people.filter(p => p.photo && /^https?:/i.test(p.photo)).length;
+        if (failed > 0) {
+          alert(
+            `Imported ${people.length} ${people.length === 1 ? 'person' : 'people'}.\n\n` +
+            `${failed} photo${failed === 1 ? '' : 's'} couldn't load — most likely because the Drive folder isn't shared publicly.\n\n` +
+            `Fix: open the Drive folder where Forms saved the photos, select all, right-click → Share → "Anyone with the link → Viewer", then re-import.\n\n` +
+            `You can also upload portraits manually by clicking each person in the queue.`
+          );
+        }
       }
-      // No more photo-failure alerts
     } catch (err) {
       console.error(err);
       alert('Something went wrong importing that file.');
@@ -127,16 +154,24 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
 
   useEffect(() => { document.title = "Editor's Desk · The Class Quarterly"; }, []);
 
+  if (loadingEdit) return <Loading label="Pulling the file" />;
+
   return (
     <div className="mx-auto max-w-6xl px-6 py-12">
       {/* Header */}
       <div className="mb-10 flex items-end justify-between border-b border-rule pb-6">
         <div>
-          <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-muted">The Editor's Desk</div>
+          <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-muted">
+            {isEditing ? `The Editor's Desk · Editing №${String(draft.issue).padStart(3, '0')}` : "The Editor's Desk"}
+          </div>
           <h1 className="mt-1 font-display text-[42px] font-400 leading-none tracking-tightest">
-            Commission a <span className="serif-italic text-vermillion">personality.</span>
+            {isEditing
+              ? <>Editing <span className="serif-italic text-vermillion">{draft.name.split(' ')[0] || 'this personality'}.</span></>
+              : <>Commission a <span className="serif-italic text-vermillion">personality.</span></>}
           </h1>
-          <p className="mt-2 font-display text-[16px] italic text-muted">One by one, or by the dozen.</p>
+          <p className="mt-2 font-display text-[16px] italic text-muted">
+            {isEditing ? 'Make the changes, then save.' : 'One by one, or by the dozen.'}
+          </p>
         </div>
         <button onClick={onSignOut}
           className="flex items-center gap-2 border border-rule px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted hover:border-ink hover:text-ink">
@@ -144,27 +179,37 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
         </button>
       </div>
 
-      <div className="grid gap-10 lg:grid-cols-[1.5fr_1fr]">
+      <div className={`grid gap-10 ${isEditing ? '' : 'lg:grid-cols-[1.5fr_1fr]'}`}>
         {/* COMPOSE */}
         <section>
-          {/* tools row */}
-          <div className="mb-7 flex flex-wrap gap-2">
-            <button onClick={aiPolish} disabled={busy === 'polish'}
-              className="flex items-center gap-2 border border-ink bg-ink px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-paper hover:bg-graphite disabled:opacity-50">
-              {busy === 'polish' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI polish & quote
-            </button>
-            <input ref={csvRef} type="file" accept=".csv,.tsv,.txt" onChange={onCSV} className="hidden" />
-            <button
-              onClick={() => csvRef.current?.click()}
-              disabled={busy === 'csv'}   // simplified – no more 'photos…' state
-              className="flex items-center gap-2 border border-rule px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-graphite hover:border-ink disabled:opacity-50"
-            >
-              {busy === 'csv'
-                ? <><Loader2 size={12} className="animate-spin" /> Reading CSV</>
-                : <><FileSpreadsheet size={12} /> Import CSV</>
-              }
-            </button>
-          </div>
+          {/* tools row — hidden when editing a single existing person */}
+          {!isEditing && (
+            <div className="mb-7 flex flex-wrap gap-2">
+              <button onClick={aiPolish} disabled={busy === 'polish'}
+                className="flex items-center gap-2 border border-ink bg-ink px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-paper hover:bg-graphite disabled:opacity-50">
+                {busy === 'polish' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI polish & quote
+              </button>
+              <input ref={csvRef} type="file" accept=".csv,.tsv,.txt" onChange={onCSV} className="hidden" />
+              <button onClick={() => csvRef.current?.click()} disabled={busy.startsWith('csv') || busy.startsWith('photos')}
+                className="flex items-center gap-2 border border-rule px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-graphite hover:border-ink disabled:opacity-50">
+                {busy === 'csv'
+                  ? <><Loader2 size={12} className="animate-spin" /> Reading CSV</>
+                  : busy.startsWith('photos ')
+                    ? <><Loader2 size={12} className="animate-spin" /> Loading {busy.replace('photos ', '')}</>
+                    : <><FileSpreadsheet size={12} /> Import CSV</>}
+              </button>
+            </div>
+          )}
+
+          {/* AI polish is still available when editing */}
+          {isEditing && (
+            <div className="mb-7 flex flex-wrap gap-2">
+              <button onClick={aiPolish} disabled={busy === 'polish'}
+                className="flex items-center gap-2 border border-ink bg-ink px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-paper hover:bg-graphite disabled:opacity-50">
+                {busy === 'polish' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI polish & quote
+              </button>
+            </div>
+          )}
 
           {/* portrait + name row */}
           <div className="grid grid-cols-[160px_1fr] gap-6">
@@ -252,65 +297,77 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
             <button onClick={publishOne} disabled={busy === 'publish'}
               className="group flex items-center gap-2 bg-ink px-5 py-3 font-display text-[14px] tracking-tight text-paper hover:bg-graphite disabled:opacity-50">
               {busy === 'publish'
-                ? <><Loader2 size={15} className="animate-spin" /> Publishing…</>
-                : <>Publish & preview <ArrowRight size={15} className="transition group-hover:translate-x-0.5" /></>}
+                ? <><Loader2 size={15} className="animate-spin" /> {isEditing ? 'Saving…' : 'Publishing…'}</>
+                : isEditing
+                  ? <><Pencil size={14} /> Save changes</>
+                  : <>Publish & preview <ArrowRight size={15} className="transition group-hover:translate-x-0.5" /></>}
             </button>
-            <button onClick={stage} disabled={busy === 'publish'}
-              className="flex items-center gap-2 border border-ink px-5 py-3 font-display text-[14px] tracking-tight text-ink hover:bg-ink hover:text-paper disabled:opacity-50">
-              <Plus size={15} /> Add to issue
-            </button>
+            {!isEditing && (
+              <button onClick={stage} disabled={busy === 'publish'}
+                className="flex items-center gap-2 border border-ink px-5 py-3 font-display text-[14px] tracking-tight text-ink hover:bg-ink hover:text-paper disabled:opacity-50">
+                <Plus size={15} /> Add to issue
+              </button>
+            )}
+            {isEditing && (
+              <button onClick={() => nav(`/p/${draft.id}`)}
+                className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted hover:text-ink">
+                Cancel
+              </button>
+            )}
           </div>
         </section>
 
-        {/* QUEUE */}
-        <aside className="lg:sticky lg:top-24 lg:self-start">
-          <div className="border border-rule bg-white">
-            <div className="flex items-center justify-between border-b border-rule px-5 py-4">
-              <div>
-                <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-muted">Next Issue</div>
-                <div className="font-display text-[20px] font-400 tracking-tight">Composing…</div>
+        {/* QUEUE — hidden in edit mode */}
+        {!isEditing && (
+          <aside className="lg:sticky lg:top-24 lg:self-start">
+            <div className="border border-rule bg-white">
+              <div className="flex items-center justify-between border-b border-rule px-5 py-4">
+                <div>
+                  <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-muted">Next Issue</div>
+                  <div className="font-display text-[20px] font-400 tracking-tight">Composing…</div>
+                </div>
+                <div className="numeral text-[32px] font-300 text-vermillion">
+                  {String(queue.length).padStart(2, '0')}
+                </div>
               </div>
-              <div className="numeral text-[32px] font-300 text-vermillion">
-                {String(queue.length).padStart(2, '0')}
-              </div>
+              {queue.length === 0
+                ? <div className="px-5 py-8 text-center">
+                  <p className="font-display text-[14px] italic text-muted">The roster is empty. Add personalities and they'll line up here.</p>
+                </div>
+                : <ul>
+                  {queue.map((p, i) => (
+                    <li key={p.id} className="flex items-center gap-3 border-b border-rule px-5 py-3 last:border-b-0">
+                      <span className="numeral w-6 text-right text-[14px] text-muted">{i + 1}</span>
+                      <div className="h-10 w-10 shrink-0 overflow-hidden bg-cream">
+                        {p.photo && <img src={p.photo} className="h-full w-full object-cover" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-display text-[14px] font-500">{p.name}</div>
+                        <div className="truncate font-mono text-[9.5px] uppercase tracking-widest text-muted">{p.department}</div>
+                      </div>
+                      <button onClick={() => setQueue(q => q.filter(x => x.id !== p.id))}
+                        className="text-muted hover:text-vermillion"><Trash2 size={14} /></button>
+                    </li>
+                  ))}
+                </ul>}
+              {queue.length > 0 &&
+                <button onClick={publishAll} disabled={busy.startsWith('upload')}
+                  className="flex w-full items-center justify-center gap-2 border-t border-rule bg-ink py-3 font-display text-[14px] text-paper hover:bg-graphite disabled:opacity-60">
+                  {busy.startsWith('upload ')
+                    ? <><Loader2 size={15} className="animate-spin" /> Uploading {busy.replace('upload ', '')}</>
+                    : <><Check size={15} /> Publish all {queue.length}</>}
+                </button>}
             </div>
-            {queue.length === 0
-              ? <div className="px-5 py-8 text-center">
-                <p className="font-display text-[14px] italic text-muted">The roster is empty. Add personalities and they'll line up here.</p>
-              </div>
-              : <ul>
-                {queue.map((p, i) => (
-                  <li key={p.id} className="flex items-center gap-3 border-b border-rule px-5 py-3 last:border-b-0">
-                    <span className="numeral w-6 text-right text-[14px] text-muted">{i + 1}</span>
-                    <div className="h-10 w-10 shrink-0 overflow-hidden bg-cream">
-                      {p.photo && <img src={p.photo} className="h-full w-full object-cover" />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-display text-[14px] font-500">{p.name}</div>
-                      <div className="truncate font-mono text-[9.5px] uppercase tracking-widest text-muted">{p.department}</div>
-                    </div>
-                    <button onClick={() => setQueue(q => q.filter(x => x.id !== p.id))}
-                      className="text-muted hover:text-vermillion"><Trash2 size={14} /></button>
-                  </li>
-                ))}
-              </ul>}
-            {queue.length > 0 &&
-              <button onClick={publishAll} disabled={busy.startsWith('upload')}
-                className="flex w-full items-center justify-center gap-2 border-t border-rule bg-ink py-3 font-display text-[14px] text-paper hover:bg-graphite disabled:opacity-60">
-                {busy.startsWith('upload ')
-                  ? <><Loader2 size={15} className="animate-spin" /> Uploading {busy.replace('upload ', '')}</>
-                  : <><Check size={15} /> Publish all {queue.length}</>}
-              </button>}
-          </div>
 
-          <div className="mt-5 border border-rule p-4">
-            <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-vermillion">From a Google Form</div>
-            <p className="mt-2 font-display text-[13px] leading-relaxed text-graphite">
-              Export responses to CSV with any of these column names:
-              <span className="serif-italic text-muted"> Full Name, Nickname, Hobbies, Relationship, Favourite Lecturer, Easiest Level, Most Stressful Level, If not Computing, Quote, Social Handle, Department, Photo (URL).</span>
-            </p>
-          </div>
-        </aside>
+            <div className="mt-5 border border-rule p-4">
+              <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-vermillion">From a Google Form</div>
+              <p className="mt-2 font-display text-[13px] leading-relaxed text-graphite">
+                Export responses to CSV with any of these column names:
+                <span className="serif-italic text-muted"> Full Name, Nickname, Hobbies, Relationship, Favourite Lecturer, Easiest Level, Most Stressful Level, If not Computing, Quote, Social Handle, Department, Photo (URL).</span>
+              </p>
+            </div>
+          </aside>
+        )}
       </div>
     </div>
   );

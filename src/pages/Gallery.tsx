@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Download, Trash2, Search, BookOpen } from 'lucide-react';
+import { Download, Trash2, Search, BookOpen, Pencil } from 'lucide-react';
 import { type Person } from '../lib/types';
 import { loadPeople, removePerson } from '../lib/store';
 import { downloadCard } from '../lib/download';
@@ -109,6 +109,10 @@ export default function Gallery() {
                 <div className="ml-auto flex gap-2">
                   <button onClick={() => download(p)} title="Download"
                     className="text-muted hover:text-ink"><Download size={14} /></button>
+                  {canManage && (
+                    <Link to={`/admin?edit=${p.id}`} title="Edit"
+                      className="text-muted hover:text-ink"><Pencil size={14} /></Link>
+                  )}
                   {canManage &&
                     <button onClick={() => del(p.id)} title="Remove"
                       className="text-muted hover:text-vermillion"><Trash2 size={14} /></button>}

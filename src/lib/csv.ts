@@ -23,7 +23,7 @@ export function parseCSV(text: string, delimiter?: string): string[][] {
       else if (c === d) { cur.push(field); field = ''; }
       else if (c === '\n') { cur.push(field); rows.push(cur); cur = []; field = ''; }
       else if (c === '\r') {
-        console.log("c")
+        console.log("C", c);
       }
       else field += c;
     }
