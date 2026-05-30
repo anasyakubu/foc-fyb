@@ -4,8 +4,17 @@ import Home from './pages/Home';
 import Admin from './pages/Admin';
 import Gallery from './pages/Gallery';
 import View from './pages/View';
+import SetupScreen from './components/SetupScreen';
+import { isConfigured } from './lib/supabase';
 
 export default function App() {
+  if (!isConfigured) {
+    return (
+      <div className="min-h-screen bg-paper">
+        <SetupScreen />
+      </div>
+    );
+  }
   return (
     <BrowserRouter>
       <div className="min-h-screen bg-paper">

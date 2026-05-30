@@ -5,14 +5,21 @@ import { type Person } from '../lib/types';
 import { getPerson } from '../lib/store';
 import { downloadCard } from '../lib/download';
 import { FybCard } from '../components/FybCard';
+import Loading from '../components/Loading';
 
 export default function View() {
   const { id } = useParams();
   const [person, setPerson] = useState<Person | null>(null);
+  const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { setPerson(getPerson(id!) || null); }, [id]);
+  useEffect(() => {
+    if (!id) return;
+    getPerson(id).then(p => { setPerson(p || null); setLoading(false); });
+  }, [id]);
+
+  if (loading) return <Loading label="Fetching the plate" />;
 
   if (!person) return (
     <div className="mx-auto max-w-2xl px-6 py-24 text-center">

@@ -4,10 +4,16 @@ import { ArrowRight, Quote } from 'lucide-react';
 import { type Person } from '../lib/types';
 import { loadPeople } from '../lib/store';
 import BukLogo from '../components/BukLogo';
+import Loading from '../components/Loading';
 
 export default function Home() {
   const [people, setPeople] = useState<Person[]>([]);
-  useEffect(() => { setPeople(loadPeople().sort((a,b) => b.issue - a.issue)); }, []);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    loadPeople().then(p => { setPeople(p); setLoading(false); });
+  }, []);
+
+  if (loading) return <Loading label="Pulling the latest issue" />;
 
   const featured = people[0];
   const next = people.slice(1, 4);

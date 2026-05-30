@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Wand2, ImagePlus, Trash2, FileSpreadsheet, Loader2, Check, LogOut, ArrowRight, Sparkles } from 'lucide-react';
 import { type Person, emptyPerson } from '../lib/types';
 import { upsertPerson, addManyPeople } from '../lib/store';
-import { parseCSV, mapRowsToPeopleWithPhotos } from '../lib/csv';
+import { parseCSV, mapRowsToPeople } from '../lib/csv';   // updated import
 import { enhanceImage, polishProfile } from '../lib/ai';
 import { isAuthed, signOut } from '../lib/auth';
 import Passcode from '../components/Passcode';
@@ -54,10 +54,23 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
     setBusy('');
   };
 
-  const publishOne = () => {
+  const publishOne = async () => {
     if (!draft.name.trim()) return alert('A name is required.');
-    upsertPerson(draft);
-    nav(`/p/${draft.id}`);
+
+    setBusy('publish');
+
+    try {
+      const saved = await upsertPerson(draft);
+      nav(`/p/${saved.id}`);
+    } catch (e: unknown) {
+      console.error(e);
+
+      const message =
+        e instanceof Error ? e.message : 'Unknown error';
+
+      alert('Could not publish: ' + message);
+      setBusy('');
+    }
   };
 
   const stage = () => {
@@ -66,36 +79,43 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
     setDraft(emptyPerson());
   };
 
-  const publishAll = () => {
+  const publishAll = async () => {
     if (!queue.length) return;
-    addManyPeople(queue);
-    setQueue([]);
-    nav('/gallery');
+
+    setBusy(`upload 0/${queue.length}`);
+
+    try {
+      await addManyPeople(queue, (done, total) =>
+        setBusy(`upload ${done}/${total}`)
+      );
+
+      setQueue([]);
+      nav('/gallery');
+    } catch (e: unknown) {
+      console.error(e);
+
+      const message =
+        e instanceof Error ? e.message : 'Unknown error';
+
+      alert('Could not publish issue: ' + message);
+      setBusy('');
+    }
   };
 
+  // UPDATED: CSV import without photo fetching
   const onCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]; if (!f) return;
+    const f = e.target.files?.[0];
+    if (!f) return;
     setBusy('csv');
     try {
       const text = await f.text();
       const rows = parseCSV(text);
-      const people = await mapRowsToPeopleWithPhotos(rows, (loaded, total) => {
-        setBusy(`photos ${loaded}/${total}`);
-      });
+      const people = mapRowsToPeople(rows);   // sync, no photo download
       setQueue(q => [...q, ...people]);
       if (people.length === 0) {
         alert("Couldn't read any rows. Check that your CSV has a header row and at least one response.");
-      } else {
-        const failed = people.filter(p => p.photo && /^https?:/i.test(p.photo)).length;
-        if (failed > 0) {
-          alert(
-            `Imported ${people.length} ${people.length === 1 ? 'person' : 'people'}.\n\n` +
-            `${failed} photo${failed === 1 ? '' : 's'} couldn't load — most likely because the Drive folder isn't shared publicly.\n\n` +
-            `Fix: open the Drive folder where Forms saved the photos, select all, right-click → Share → "Anyone with the link → Viewer", then re-import.\n\n` +
-            `You can also upload portraits manually by clicking each person in the queue.`
-          );
-        }
       }
+      // No more photo-failure alerts
     } catch (err) {
       console.error(err);
       alert('Something went wrong importing that file.');
@@ -129,18 +149,20 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
         <section>
           {/* tools row */}
           <div className="mb-7 flex flex-wrap gap-2">
-            <button onClick={aiPolish} disabled={busy==='polish'}
+            <button onClick={aiPolish} disabled={busy === 'polish'}
               className="flex items-center gap-2 border border-ink bg-ink px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-paper hover:bg-graphite disabled:opacity-50">
-              {busy==='polish' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI polish & quote
+              {busy === 'polish' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI polish & quote
             </button>
             <input ref={csvRef} type="file" accept=".csv,.tsv,.txt" onChange={onCSV} className="hidden" />
-            <button onClick={() => csvRef.current?.click()} disabled={busy.startsWith('csv') || busy.startsWith('photos')}
-              className="flex items-center gap-2 border border-rule px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-graphite hover:border-ink disabled:opacity-50">
+            <button
+              onClick={() => csvRef.current?.click()}
+              disabled={busy === 'csv'}   // simplified – no more 'photos…' state
+              className="flex items-center gap-2 border border-rule px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-graphite hover:border-ink disabled:opacity-50"
+            >
               {busy === 'csv'
                 ? <><Loader2 size={12} className="animate-spin" /> Reading CSV</>
-                : busy.startsWith('photos ')
-                  ? <><Loader2 size={12} className="animate-spin" /> Loading {busy.replace('photos ', '')}</>
-                  : <><FileSpreadsheet size={12} /> Import CSV</>}
+                : <><FileSpreadsheet size={12} /> Import CSV</>
+              }
             </button>
           </div>
 
@@ -158,9 +180,9 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
                 className="mt-2 flex w-full items-center justify-center gap-1.5 border border-rule py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-graphite hover:border-ink">
                 <ImagePlus size={12} /> Upload
               </button>
-              <button onClick={aiEnhance} disabled={!draft.photo || busy==='enhance'}
+              <button onClick={aiEnhance} disabled={!draft.photo || busy === 'enhance'}
                 className="mt-1.5 flex w-full items-center justify-center gap-1.5 bg-ink py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-paper hover:bg-graphite disabled:opacity-40">
-                {busy==='enhance' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />} AI enhance
+                {busy === 'enhance' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />} AI enhance
               </button>
             </div>
 
@@ -221,18 +243,20 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
             <div>
               <label className="lbl">Platform</label>
               <select className="fld" value={draft.socialPlatform} onChange={onField('socialPlatform')}>
-                {['Instagram','X (Twitter)','TikTok','LinkedIn','Snapchat'].map(p => <option key={p}>{p}</option>)}
+                {['Instagram', 'X (Twitter)', 'TikTok', 'LinkedIn', 'Snapchat'].map(p => <option key={p}>{p}</option>)}
               </select>
             </div>
           </div>
 
           <div className="mt-10 flex flex-wrap items-center gap-3">
-            <button onClick={publishOne}
-              className="group flex items-center gap-2 bg-ink px-5 py-3 font-display text-[14px] tracking-tight text-paper hover:bg-graphite">
-              Publish & preview <ArrowRight size={15} className="transition group-hover:translate-x-0.5" />
+            <button onClick={publishOne} disabled={busy === 'publish'}
+              className="group flex items-center gap-2 bg-ink px-5 py-3 font-display text-[14px] tracking-tight text-paper hover:bg-graphite disabled:opacity-50">
+              {busy === 'publish'
+                ? <><Loader2 size={15} className="animate-spin" /> Publishing…</>
+                : <>Publish & preview <ArrowRight size={15} className="transition group-hover:translate-x-0.5" /></>}
             </button>
-            <button onClick={stage}
-              className="flex items-center gap-2 border border-ink px-5 py-3 font-display text-[14px] tracking-tight text-ink hover:bg-ink hover:text-paper">
+            <button onClick={stage} disabled={busy === 'publish'}
+              className="flex items-center gap-2 border border-ink px-5 py-3 font-display text-[14px] tracking-tight text-ink hover:bg-ink hover:text-paper disabled:opacity-50">
               <Plus size={15} /> Add to issue
             </button>
           </div>
@@ -247,33 +271,35 @@ function Editor({ onSignOut }: { onSignOut: () => void }) {
                 <div className="font-display text-[20px] font-400 tracking-tight">Composing…</div>
               </div>
               <div className="numeral text-[32px] font-300 text-vermillion">
-                {String(queue.length).padStart(2,'0')}
+                {String(queue.length).padStart(2, '0')}
               </div>
             </div>
             {queue.length === 0
               ? <div className="px-5 py-8 text-center">
-                  <p className="font-display text-[14px] italic text-muted">The roster is empty. Add personalities and they'll line up here.</p>
-                </div>
+                <p className="font-display text-[14px] italic text-muted">The roster is empty. Add personalities and they'll line up here.</p>
+              </div>
               : <ul>
-                  {queue.map((p, i) => (
-                    <li key={p.id} className="flex items-center gap-3 border-b border-rule px-5 py-3 last:border-b-0">
-                      <span className="numeral w-6 text-right text-[14px] text-muted">{i + 1}</span>
-                      <div className="h-10 w-10 shrink-0 overflow-hidden bg-cream">
-                        {p.photo && <img src={p.photo} className="h-full w-full object-cover" />}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-display text-[14px] font-500">{p.name}</div>
-                        <div className="truncate font-mono text-[9.5px] uppercase tracking-widest text-muted">{p.department}</div>
-                      </div>
-                      <button onClick={() => setQueue(q => q.filter(x => x.id !== p.id))}
-                        className="text-muted hover:text-vermillion"><Trash2 size={14} /></button>
-                    </li>
-                  ))}
-                </ul>}
+                {queue.map((p, i) => (
+                  <li key={p.id} className="flex items-center gap-3 border-b border-rule px-5 py-3 last:border-b-0">
+                    <span className="numeral w-6 text-right text-[14px] text-muted">{i + 1}</span>
+                    <div className="h-10 w-10 shrink-0 overflow-hidden bg-cream">
+                      {p.photo && <img src={p.photo} className="h-full w-full object-cover" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-display text-[14px] font-500">{p.name}</div>
+                      <div className="truncate font-mono text-[9.5px] uppercase tracking-widest text-muted">{p.department}</div>
+                    </div>
+                    <button onClick={() => setQueue(q => q.filter(x => x.id !== p.id))}
+                      className="text-muted hover:text-vermillion"><Trash2 size={14} /></button>
+                  </li>
+                ))}
+              </ul>}
             {queue.length > 0 &&
-              <button onClick={publishAll}
-                className="flex w-full items-center justify-center gap-2 border-t border-rule bg-ink py-3 font-display text-[14px] text-paper hover:bg-graphite">
-                <Check size={15} /> Publish all {queue.length}
+              <button onClick={publishAll} disabled={busy.startsWith('upload')}
+                className="flex w-full items-center justify-center gap-2 border-t border-rule bg-ink py-3 font-display text-[14px] text-paper hover:bg-graphite disabled:opacity-60">
+                {busy.startsWith('upload ')
+                  ? <><Loader2 size={15} className="animate-spin" /> Uploading {busy.replace('upload ', '')}</>
+                  : <><Check size={15} /> Publish all {queue.length}</>}
               </button>}
           </div>
 
